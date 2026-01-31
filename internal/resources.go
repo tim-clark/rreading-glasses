@@ -120,6 +120,11 @@ type BatchSearchResource struct {
 	Results map[string][]SearchResource `json:"results"`
 }
 
+// BatchAuthorResource represents the result of a batch author request.
+type BatchAuthorResource struct {
+	Results map[int64]AuthorResource `json:"results"`
+}
+
 // RecommentationsResource contains recommended work IDs.
 type RecommentationsResource struct {
 	WorkIDs []int64 `json:"workIds"`

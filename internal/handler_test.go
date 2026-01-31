@@ -107,3 +107,55 @@ func TestSearchBatchHandler(t *testing.T) {
 	assert.Equal(t, results2, result.Results[query2])
 }
 
+func TestAuthorBatchHandler(t *testing.T) {
+	t.Parallel()
+
+	c := gomock.NewController(t)
+	getter := NewMockgetter(c)
+
+	// Mock author data for different IDs
+	authorID1 := int64(100)
+	authorID2 := int64(200)
+
+	author1 := AuthorResource{
+		ForeignID: authorID1,
+		Name:      "Test Author 1",
+	}
+	author2 := AuthorResource{
+		ForeignID: authorID2,
+		Name:      "Test Author 2",
+	}
+
+	// Mock GetAuthor responses
+	author1Bytes, _ := json.Marshal(author1)
+	author2Bytes, _ := json.Marshal(author2)
+
+	getter.EXPECT().GetAuthor(gomock.Any(), authorID1).Return(author1Bytes, nil).Times(1)
+	getter.EXPECT().GetAuthor(gomock.Any(), authorID2).Return(author2Bytes, nil).Times(1)
+
+	cache := newMemoryCache()
+	ctrl, err := NewController(cache, getter, nil, nil)
+	require.NoError(t, err)
+
+	handler := NewHandler(ctrl)
+
+	// Test the batch author endpoint
+	ids := []int64{authorID1, authorID2}
+	body, _ := json.Marshal(ids)
+
+	req := httptest.NewRequest(http.MethodPost, "/author/batch", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	handler.authorBatch(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var result BatchAuthorResource
+	err = json.Unmarshal(w.Body.Bytes(), &result)
+	require.NoError(t, err)
+
+	assert.Len(t, result.Results, 2)
+	assert.Equal(t, author1.Name, result.Results[authorID1].Name)
+	assert.Equal(t, author2.Name, result.Results[authorID2].Name)
+}
+
