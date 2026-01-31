@@ -13,6 +13,34 @@
         "version": "1.0"
     },
     "paths": {
+        "/author/batch": {
+            "post": {
+                "description": "Fetch metadata for multiple authors at once, reducing rate limiting issues with the upstream API.",
+                "summary": "Fetch multiple authors by ID in a single request",
+                "parameters": [
+                    {
+                        "description": "array of author IDs",
+                        "name": "ids",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "type": "integer"
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal.BatchAuthorResource"
+                        }
+                    }
+                }
+            }
+        },
         "/author/{authorId}": {
             "get": {
                 "description": "This returns an extremely \"fat,\" un-paginated payload -- in many cases many megabytes in size. The design of this endpoint was at the core of R——'s performance problems.",
@@ -224,7 +252,7 @@
         },
         "/search/batch": {
             "post": {
-                "description": "Search both authors and works for multiple queries at once. All queries are processed concurrently, allowing the underlying batched GraphQL client (1-second window, batch size 25) to combine multiple Search operations into a single HTTP request to Hardcover. This significantly reduces API calls to Hardcover's rate-limited API (60 requests/minute). For example: 10 sequential /search calls = 10 API requests, but 1 /search/batch call with 10 queries = 1 API request (if within batch window).",
+                "description": "Search both authors and works for multiple queries at once, reducing rate limiting issues with the upstream API.",
                 "summary": "Perform multiple freetext search queries in a single request",
                 "parameters": [
                     {
@@ -339,6 +367,17 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/internal.workResource"
+                    }
+                }
+            }
+        },
+        "internal.BatchAuthorResource": {
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/internal.AuthorResource"
                     }
                 }
             }
