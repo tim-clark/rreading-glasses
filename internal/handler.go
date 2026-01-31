@@ -192,6 +192,7 @@ func (h *Handler) searchBatch(w http.ResponseWriter, r *http.Request) {
 //
 // Hardcover GraphQL endpoints called per author:
 //   - For each author: 1x "GetAuthor" + Nx "GetWork" (N = number of works)
+//   - These calls happen within the getter.GetAuthor implementation
 //   - All author queries from the batch are processed concurrently
 //   - The batched GraphQL client combines them into minimal HTTP requests
 //
