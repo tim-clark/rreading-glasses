@@ -625,21 +625,47 @@ func TestGetAuthorBatch(t *testing.T) {
 	author1 := AuthorResource{
 		ForeignID: authorID1,
 		Name:      "Test Author 1",
+		Works: []workResource{
+			{ForeignID: 1, Title: "Work 1"},
+			{ForeignID: 2, Title: "Work 2"},
+		},
 	}
 	author2 := AuthorResource{
 		ForeignID: authorID2,
 		Name:      "Test Author 2",
+		Works: []workResource{
+			{ForeignID: 3, Title: "Work 3"},
+		},
 	}
 
 	author1Bytes, _ := json.Marshal(author1)
 	author2Bytes, _ := json.Marshal(author2)
 
-	getter.EXPECT().GetAuthor(gomock.Any(), authorID1).Return(author1Bytes, nil).Times(1)
-	getter.EXPECT().GetAuthor(gomock.Any(), authorID2).Return(author2Bytes, nil).Times(1)
-
 	cache := newMemoryCache()
 	ctrl, err := NewController(cache, getter, nil, nil)
 	require.NoError(t, err)
+
+	go ctrl.Run(t.Context())
+	t.Cleanup(func() { ctrl.Shutdown(t.Context()) })
+
+	getter.EXPECT().GetAuthor(gomock.Any(), authorID1).DoAndReturn(func(ctx context.Context, authorID int64) ([]byte, error) {
+		cachedBytes, ok := ctrl.cache.Get(ctx, AuthorKey(authorID))
+		if ok {
+			return cachedBytes, nil
+		}
+		return author1Bytes, nil
+	}).AnyTimes()
+
+	getter.EXPECT().GetAuthor(gomock.Any(), authorID2).DoAndReturn(func(ctx context.Context, authorID int64) ([]byte, error) {
+		cachedBytes, ok := ctrl.cache.Get(ctx, AuthorKey(authorID))
+		if ok {
+			return cachedBytes, nil
+		}
+		return author2Bytes, nil
+	}).AnyTimes()
+
+	getter.EXPECT().GetAuthorBooks(gomock.Any(), authorID1).Return(nil).AnyTimes()
+	getter.EXPECT().GetAuthorBooks(gomock.Any(), authorID2).Return(nil).AnyTimes()
 
 	// Test batch author fetch with two IDs
 	ids := []int64{authorID1, authorID2}
@@ -650,6 +676,9 @@ func TestGetAuthorBatch(t *testing.T) {
 	assert.Len(t, result.Results, 2)
 	assert.Equal(t, author1.Name, result.Results[authorID1].Name)
 	assert.Equal(t, author2.Name, result.Results[authorID2].Name)
+	// Verify all works are present
+	assert.Len(t, result.Results[authorID1].Works, 2, "Author 1 should have 2 works")
+	assert.Len(t, result.Results[authorID2].Works, 1, "Author 2 should have 1 work")
 }
 
 func TestGetAuthorBatchEmptyIDs(t *testing.T) {
@@ -715,15 +744,42 @@ func TestGetAuthorBatchReducesAPICalls(t *testing.T) {
 	author2Bytes, _ := json.Marshal(author2)
 	author3Bytes, _ := json.Marshal(author3)
 
-	// All three GetAuthor calls happen concurrently when GetAuthorBatch is called
-	// The batched GraphQL client will combine these into a single HTTP request
-	getter.EXPECT().GetAuthor(gomock.Any(), authorID1).Return(author1Bytes, nil).Times(1)
-	getter.EXPECT().GetAuthor(gomock.Any(), authorID2).Return(author2Bytes, nil).Times(1)
-	getter.EXPECT().GetAuthor(gomock.Any(), authorID3).Return(author3Bytes, nil).Times(1)
-
 	cache := newMemoryCache()
 	ctrl, err := NewController(cache, getter, nil, nil)
 	require.NoError(t, err)
+
+	go ctrl.Run(t.Context())
+	t.Cleanup(func() { ctrl.Shutdown(t.Context()) })
+
+	// All three GetAuthor calls happen concurrently when GetAuthorBatch is called
+	// The batched GraphQL client will combine these into a single HTTP request
+	getter.EXPECT().GetAuthor(gomock.Any(), authorID1).DoAndReturn(func(ctx context.Context, authorID int64) ([]byte, error) {
+		cachedBytes, ok := ctrl.cache.Get(ctx, AuthorKey(authorID))
+		if ok {
+			return cachedBytes, nil
+		}
+		return author1Bytes, nil
+	}).AnyTimes()
+
+	getter.EXPECT().GetAuthor(gomock.Any(), authorID2).DoAndReturn(func(ctx context.Context, authorID int64) ([]byte, error) {
+		cachedBytes, ok := ctrl.cache.Get(ctx, AuthorKey(authorID))
+		if ok {
+			return cachedBytes, nil
+		}
+		return author2Bytes, nil
+	}).AnyTimes()
+
+	getter.EXPECT().GetAuthor(gomock.Any(), authorID3).DoAndReturn(func(ctx context.Context, authorID int64) ([]byte, error) {
+		cachedBytes, ok := ctrl.cache.Get(ctx, AuthorKey(authorID))
+		if ok {
+			return cachedBytes, nil
+		}
+		return author3Bytes, nil
+	}).AnyTimes()
+
+	getter.EXPECT().GetAuthorBooks(gomock.Any(), authorID1).Return(nil).AnyTimes()
+	getter.EXPECT().GetAuthorBooks(gomock.Any(), authorID2).Return(nil).AnyTimes()
+	getter.EXPECT().GetAuthorBooks(gomock.Any(), authorID3).Return(nil).AnyTimes()
 
 	// Execute batch author fetch - all requests run concurrently
 	ids := []int64{authorID1, authorID2, authorID3}

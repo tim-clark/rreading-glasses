@@ -331,7 +331,7 @@ func (c *Controller) GetAuthorBatch(ctx context.Context, authorIDs []int64) (Bat
 		go func(authorID int64) {
 			defer wg.Done()
 
-			authorBytes, err := c.getter.GetAuthor(ctx, authorID)
+			authorBytes, _, err := c.GetAuthor(ctx, authorID)
 			if err != nil {
 				Log(ctx).Warn("batch author query failed", "authorID", authorID, "err", err)
 				return
