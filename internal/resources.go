@@ -121,6 +121,8 @@ type BatchSearchResource struct {
 }
 
 // BatchAuthorResource represents the result of a batch author request.
+// Keys are author IDs (int64) rather than strings to maintain type safety
+// and match the natural data type of author identifiers.
 type BatchAuthorResource struct {
 	Results map[int64]AuthorResource `json:"results"`
 }

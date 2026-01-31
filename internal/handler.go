@@ -220,11 +220,6 @@ func (h *Handler) authorBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(authorIDs) == 0 {
-		h.error(w, errors.New("no author IDs provided"))
-		return
-	}
-
 	result, err := h.ctrl.GetAuthorBatch(ctx, authorIDs)
 	if err != nil {
 		h.error(w, err)
