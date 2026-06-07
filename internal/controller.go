@@ -291,6 +291,69 @@ func (c *Controller) SearchBatch(ctx context.Context, queries []string) (BatchSe
 	return result, nil
 }
 
+// GetAuthorBatch fetches multiple authors by their IDs in a single request.
+//
+// This endpoint processes multiple author requests concurrently and returns
+// results grouped by author ID. The key benefit is that all author queries are
+// executed simultaneously, allowing the underlying batched GraphQL client
+// (configured with a 1-second window and batch size of 25) to combine
+// multiple GraphQL operations into a single HTTP request to Hardcover.
+//
+// Note: Each author fetch may internally trigger additional GraphQL calls
+// (e.g., GetWork queries for the author's works), which are also batched.
+//
+// This significantly reduces API calls to Hardcover's rate-limited API
+// (60 requests/minute). For example:
+//   - 10 sequential /author/{id} calls = ~40 API requests (1 GetAuthor + ~3 GetWork each)
+//   - 1 /author/batch call with 10 IDs = ~4 API requests (batched together)
+func (c *Controller) GetAuthorBatch(ctx context.Context, authorIDs []int64) (BatchAuthorResource, error) {
+	result := BatchAuthorResource{
+		Results: make(map[int64]AuthorResource),
+	}
+
+	// Filter out invalid IDs
+	validIDs := []int64{}
+	for _, id := range authorIDs {
+		if id > 0 && !unknownAuthor(id) {
+			validIDs = append(validIDs, id)
+		}
+	}
+
+	if len(validIDs) == 0 {
+		return result, nil
+	}
+
+	mu := sync.Mutex{}
+	wg := sync.WaitGroup{}
+
+	for _, id := range validIDs {
+		wg.Add(1)
+		go func(authorID int64) {
+			defer wg.Done()
+
+			authorBytes, _, err := c.GetAuthor(ctx, authorID)
+			if err != nil {
+				Log(ctx).Warn("batch author query failed", "authorID", authorID, "err", err)
+				return
+			}
+
+			var author AuthorResource
+			err = json.Unmarshal(authorBytes, &author)
+			if err != nil {
+				Log(ctx).Warn("failed to unmarshal author", "authorID", authorID, "err", err)
+				return
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			result.Results[authorID] = author
+		}(id)
+	}
+
+	wg.Wait()
+	return result, nil
+}
+
 // Recommendations returns recommended work IDs.
 func (c *Controller) Recommendations(ctx context.Context, page int64) (RecommentationsResource, error) {
 	recs, err := c.getter.Recommendations(ctx, page)

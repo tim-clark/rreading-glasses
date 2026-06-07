@@ -70,6 +70,7 @@ func NewMux(h *Handler, reg *prometheus.Registry) http.Handler {
 
 	mux.HandleFunc("/book/bulk", h.bulkBook)
 	mux.HandleFunc("/author/{foreignAuthorID}", h.getAuthorID)
+	mux.HandleFunc("/author/batch", h.authorBatch)
 	mux.HandleFunc("/author/changed", h.getAuthorChanged)
 	mux.HandleFunc("/series/{seriesID}", h.getSeriesID)
 
@@ -193,6 +194,56 @@ func (h *Handler) searchBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.ctrl.SearchBatch(ctx, queries)
+	if err != nil {
+		h.error(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	cacheFor(w, _searchTTL, true)
+	_ = json.NewEncoder(w).Encode(result)
+}
+
+// authorBatch fetches multiple authors by their IDs in a single request.
+//
+// This endpoint processes multiple author requests concurrently and returns
+// results grouped by author ID. The key benefit is that all author queries are
+// executed simultaneously, allowing the underlying batched GraphQL client
+// (configured with a 1-second window and batch size of 25) to combine
+// multiple GraphQL operations into a single HTTP request to Hardcover.
+//
+// Hardcover GraphQL endpoints called per author:
+//   - For each author: 1x "GetAuthor" + Nx "GetWork" (N = number of works)
+//   - These calls happen within the getter.GetAuthor implementation
+//   - All author queries from the batch are processed concurrently
+//   - The batched GraphQL client combines them into minimal HTTP requests
+//
+// This significantly reduces API calls to Hardcover's rate-limited API
+// (60 requests/minute). For example:
+//   - 10 sequential /author/{id} calls = ~40 API requests (1 GetAuthor + ~3 GetWork each)
+//   - 1 /author/batch call with 10 IDs = ~4 API requests (batched together)
+//
+// @summary Fetch multiple authors by ID in a single request
+// @description Fetch metadata for multiple authors at once, reducing rate limiting issues with the upstream API.
+// @success 200 {object} BatchAuthorResource
+// @router /author/batch [post]
+// @param ids body []int true "array of author IDs"
+func (h *Handler) authorBatch(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	if r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+
+	var authorIDs []int64
+	err := json.NewDecoder(r.Body).Decode(&authorIDs)
+	if err != nil {
+		h.error(w, errors.Join(err, errBadRequest))
+		return
+	}
+
+	result, err := h.ctrl.GetAuthorBatch(ctx, authorIDs)
 	if err != nil {
 		h.error(w, err)
 		return
