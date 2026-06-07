@@ -486,7 +486,7 @@ func TestHardcoverIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		expected := SearchResource{
-			BookID: 3890025,
+			BookID: 14969655,
 			WorkID: 328491,
 			Author: SearchResourceAuthor{
 				ID: 80626,
@@ -509,7 +509,7 @@ func TestHardcoverIntegration(t *testing.T) {
 		series, err := getter.GetSeries(t.Context(), 40337)
 		require.NoError(t, err)
 
-		assert.Equal(t, len(series.LinkItems), 15)
+		assert.Equal(t, len(series.LinkItems), 16)
 	})
 
 	t.Run("Recommended", func(t *testing.T) {
@@ -558,7 +558,7 @@ func TestBestAuthor(t *testing.T) {
 				assert.ErrorIs(t, err, tt.wantErr)
 				return
 			}
-			assert.Equal(t, tt.want, actual.AuthorInfo.Id)
+			assert.Equal(t, tt.want, actual.Id)
 		})
 	}
 }

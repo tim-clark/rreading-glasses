@@ -89,7 +89,29 @@ func NewMux(h *Handler, reg *prometheus.Registry) http.Handler {
 		JsonEditor:  true,
 	}))
 
-	return instrument(reg, mux)
+	throttled := middleware.ThrottleWithOpts(middleware.ThrottleOpts{
+		Limit:          2,
+		BacklogLimit:   100,
+		BacklogTimeout: time.Minute,
+		StatusCode:     http.StatusTooManyRequests,
+		RetryAfterFn: func(_ bool) time.Duration {
+			return fuzz(30*time.Second, 10)
+		},
+	})(mux)
+
+	// Clients retry really aggressively and create thundering herds. Tell them
+	// to back off if we're overloaded.
+	server := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only throttle GET /author.
+		if r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/author/") {
+			throttled.ServeHTTP(w, r)
+			return
+		}
+
+		mux.ServeHTTP(w, r)
+	})
+
+	return instrument(reg, server)
 }
 
 // search performs a query against the metadata server.

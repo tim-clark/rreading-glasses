@@ -8,7 +8,6 @@ import (
 	"iter"
 	"maps"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,7 +44,7 @@ func NewHardcoverGetter(cache cache[[]byte], gql graphql.Client) (*HCGetter, err
 //   - 1x Search query → returns work IDs [123, 456, 789]
 //   - 3x GetWork queries → fetches details for each work (batched together)
 func (g *HCGetter) Search(ctx context.Context, query string) ([]SearchResource, error) {
-	workIDs := []string{}
+	workIDs := []int64{}
 
 	// Try a lookup by ASIN/ISBN if the query looks like one
 	if _asin.Match([]byte(query)) || isbn.Validate(query) {
@@ -55,7 +54,7 @@ func (g *HCGetter) Search(ctx context.Context, query string) ([]SearchResource, 
 			return nil, fmt.Errorf("looking up: %w", err)
 		}
 		for _, e := range resp.Editions {
-			workIDs = append(workIDs, fmt.Sprint(e.Book_id))
+			workIDs = append(workIDs, e.Book_id)
 		}
 	} else {
 		// Calls: query Search (hardcover/queries.graphql:166)
@@ -75,15 +74,8 @@ func (g *HCGetter) Search(ctx context.Context, query string) ([]SearchResource, 
 	// For each work ID returned, fetch full details
 	// These GetWork calls are batched together by batchedgqlclient
 	for _, workID := range workIDs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
-			id, err := strconv.ParseInt(workID, 10, 64)
-			if err != nil {
-				Log(ctx).Warn("problem parsing", "workID", workID, "err", err)
-				return
-			}
+		wg.Go(func() {
+			id := workID
 
 			// Calls: query GetWork (hardcover/queries.graphql:102)
 			// Fetches book details and editions from books_by_pk
@@ -113,7 +105,7 @@ func (g *HCGetter) Search(ctx context.Context, query string) ([]SearchResource, 
 					ID: workRsc.Authors[0].ForeignID,
 				},
 			})
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -139,7 +131,7 @@ func (g *HCGetter) GetWork(ctx context.Context, workID int64, saveEditions editi
 		return nil, 0, fmt.Errorf("getting work: %w", err)
 	}
 
-	if resp.Books_by_pk.WorkInfo.Id == 0 {
+	if resp.Books_by_pk.Id == 0 {
 		return nil, 0, errors.Join(errNotFound, fmt.Errorf("invalid work info"))
 	}
 
@@ -151,9 +143,9 @@ func (g *HCGetter) GetWork(ctx context.Context, workID int64, saveEditions editi
 		editions := map[editionDedupe]workResource{}
 		for _, e := range resp.Books_by_pk.Editions {
 			key := editionDedupe{
-				title:    strings.ToUpper(e.EditionInfo.Title),
-				language: e.EditionInfo.Language.Code3,
-				audio:    e.EditionInfo.Audio_seconds != 0,
+				title:    strings.ToUpper(e.Title),
+				language: e.Language.Code3,
+				audio:    e.Audio_seconds != 0,
 			}
 			if _, ok := editions[key]; ok {
 				continue // Already saw an edition similar to this one.
@@ -168,7 +160,7 @@ func (g *HCGetter) GetWork(ctx context.Context, workID int64, saveEditions editi
 		saveEditions(slices.Collect(maps.Values(editions))...)
 	}
 
-	author, err := bestAuthor(hardcover.AsContributions(resp.Books_by_pk.WorkInfo.Contributions))
+	author, err := bestAuthor(hardcover.AsContributions(resp.Books_by_pk.Contributions))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -303,7 +295,7 @@ func mapHardcoverToWorkResource(ctx context.Context, edition hardcover.EditionIn
 	}
 
 	authorDescription := "N/A" // Must be set?
-	if author.AuthorInfo.Bio != "" {
+	if author.Bio != "" {
 		authorDescription = author.Bio
 	}
 
@@ -510,7 +502,7 @@ func (g *HCGetter) GetAuthor(ctx context.Context, authorID int64) ([]byte, error
 		return nil, fmt.Errorf("getting author editions: %w", err)
 	}
 
-	if resp.Authors_by_pk.AuthorInfo.Id == 0 {
+	if resp.Authors_by_pk.Id == 0 {
 		return nil, errors.Join(errNotFound, fmt.Errorf("invalid author editions"))
 	}
 
@@ -566,7 +558,7 @@ func (g *HCGetter) GetSeries(ctx context.Context, seriesID int64) (*SeriesResour
 	for offset < 3*limit {
 		series, err := hardcover.GetSeries(ctx, g.gql, seriesID, limit, offset)
 		if err != nil {
-			return nil, fmt.Errorf("getting series %q: %w", seriesID, err)
+			return nil, fmt.Errorf("getting series %d: %w", seriesID, err)
 		}
 
 		seriesRsc.Title = series.Series_by_pk.Name

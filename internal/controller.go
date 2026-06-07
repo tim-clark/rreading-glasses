@@ -185,8 +185,8 @@ func NewController(cache cache[[]byte], getter getter, persister persister, reg 
 		c.persister = persister
 	}
 
-	c.refreshG.SetLimit(15) // TODO: This should probably be 3 * batch size.
-	c.workG.SetLimit(25)    // Sure why not.
+	c.refreshG.SetLimit(30)
+	c.workG.SetLimit(25) // Sure why not.
 
 	return c, nil
 }
@@ -501,8 +501,20 @@ func (c *Controller) getBook(ctx context.Context, bookID int64) (ttlpair, error)
 				return
 			}
 			if _, _, err := c.GetAuthor(ctx, authorID); err != nil { // Ensure fetched.
-				Log(ctx).Warn("skipping work denorm due to error", "bookID", bookID, "authorID", authorID, "err", err)
-				return
+				if errors.Is(err, errNotFound) {
+					// Something's not right -- we know this author must exist
+					// because the work belongs to it, but we have a 404
+					// cached. Trigger a fresh fetch and delete any in-progress
+					// refresh. This should hopefully be enough to get back to
+					// a good state.
+					Log(ctx).Warn("force refreshing author due to unexpected 404", "bookID", bookID, "authorID", authorID)
+					_ = c.cache.Expire(ctx, AuthorKey(authorID))
+					_ = c.persister.Delete(ctx, authorID)
+					_, _, _ = c.GetAuthor(ctx, authorID)
+				} else {
+					Log(ctx).Warn("skipping author denorm due to error", "bookID", bookID, "authorID", authorID, "err", err)
+					return
+				}
 			}
 			c.denormC <- edge{kind: workEdge, parentID: workID, childIDs: newSet(bookID)}
 		}()
@@ -1063,10 +1075,7 @@ func (c *Controller) denormalizeWorks(ctx context.Context, authorID int64, workI
 		}
 		for _, s := range w.Series {
 			// Fetch the complete series since we might not derive it correctly from works alone.
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-
+			wg.Go(func() {
 				s, err := c.GetSeries(ctx, s.ForeignID)
 				if err != nil {
 					return
@@ -1088,7 +1097,7 @@ func (c *Controller) denormalizeWorks(ctx context.Context, authorID int64, workI
 				if !found {
 					author.Series = slices.Insert(author.Series, idx, ss)
 				}
-			}()
+			})
 		}
 	}
 
